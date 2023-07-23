@@ -10,6 +10,7 @@ import (
 
 type nodes []node
 
+// leaf page 和 branch page 在内存中都是使用node表示的
 type node struct {
 	isLeaf     bool
 	unbalanced bool
@@ -118,7 +119,7 @@ func (b *branchPageElement) key() []byte {
 
 // 保存key-value的元素信息
 type leafPageElement struct {
-	flags uint32 // 0：普通的叶子节点元素  1：子bucket叶子节点元素
+	flags uint32 // 0：普通的叶子节点元素  1：子bucket
 	pos   uint32 //key距离leafPageElement的偏移位置
 	ksize uint32 // key的尺寸
 	vsize uint32 // value的尺寸

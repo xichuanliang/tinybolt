@@ -16,6 +16,8 @@ const (
 	freelistPageFlag = 0x10 //0000 1010
 )
 
+const bucketLeafFlag = 0x01
+
 // branch元素所占大小
 const branchPageElementSize = int(unsafe.Sizeof(branchPageElement{}))
 
@@ -25,10 +27,11 @@ const leafPageElementSize = int(unsafe.Sizeof(leafPageElement{}))
 type pgid uint64
 
 type page struct {
-	id    pgid    // 页id
-	flags uint16  // 4种page类型
-	count uint16  // 节点数目 统计叶子节点、非叶子节点、空闲列表页的个数
-	ptr   uintptr // 保存数据的首指针
+	id       pgid    // 页id
+	flags    uint16  // 4种page类型
+	count    uint16  // 节点数目 统计叶子节点、非叶子节点的个数
+	overflow uint32  // 数据是否溢出，当一个page存不下时就会溢出
+	ptr      uintptr // 保存数据的首指针
 }
 
 func (p *page) typ() string {
@@ -54,6 +57,7 @@ func (p *page) branchPageElement(index uint16) *branchPageElement {
 	return &(*[tinybolt.MaxElementSize]branchPageElement)(unsafe.Pointer(&p.ptr))[index]
 }
 
+// 获取page的整个branchPageElements
 func (p *page) branchPageElements() []branchPageElement {
 	if p.count == 0 {
 		return nil
@@ -61,10 +65,12 @@ func (p *page) branchPageElements() []branchPageElement {
 	return (*[tinybolt.MaxElementSize]branchPageElement)(unsafe.Pointer(&p.ptr))[:]
 }
 
+// 获取第index个leafpageElement
 func (p *page) leafPageElement(index uint16) *leafPageElement {
 	return &(*[tinybolt.MaxElementSize]leafPageElement)(unsafe.Pointer(&p.ptr))[index]
 }
 
+// 获取整个leafPageElements
 func (p *page) leafPageElements() []leafPageElement {
 	if p.count == 0 {
 		return nil
