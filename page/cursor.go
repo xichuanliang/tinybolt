@@ -2,12 +2,108 @@ package page
 
 import (
 	"bytes"
+	"fmt"
 	"sort"
 )
 
 type Cursor struct {
 	bucket *Bucket   // 对应的bucket
 	stack  []elemRef // 将递归遍历到的值存储到栈中
+}
+
+// 找到指定的Key-value
+func (c *Cursor) Seek(seek []byte) (key []byte, value []byte) {
+	k, v, flags := c.seek(seek)
+	if ref := &c.stack[len(c.stack)-1]; ref.index >= ref.count() {
+		k, v, flags = c.next()
+	}
+	if k == nil {
+		return nil, nil
+		// 是子桶
+	} else if (flags & uint32(bucketLeafFlag)) != 0 {
+		return k, nil
+	}
+	return k, v
+}
+
+// 找到指定的key，并返回key value
+func (c *Cursor) seek(seek []byte) (key []byte, value []byte, flags uint32) {
+	// 清空stack
+	c.stack = c.stack[:0]
+	// 根据seek的key值搜索root
+	c.search(seek, c.bucket.root)
+	// c.stack保存了所有遍历过的节点
+	ref := &c.stack[len(c.stack)-1]
+	// cursor指向page/node的末尾，返回nil，说明没找到
+	if ref.index >= ref.count() {
+		return nil, nil, 0
+	}
+	return c.keyValue()
+}
+
+// 从leaf elemRef中获取 key / value
+func (c *Cursor) keyValue() ([]byte, []byte, uint32) {
+	// 去最后一个elemRef
+	ref := &c.stack[len(c.stack)-1]
+	if ref.count() == 0 || ref.index >= ref.count() {
+		return nil, nil, 0
+	}
+	// 存在leaf node，返回节点对应index的key value
+	if ref.node != nil {
+		innode := ref.node.innodes[ref.index]
+		return innode.key, innode.value, innode.flags
+	}
+	// 从page中 返回对应节点的Key value
+	elem := ref.page.leafPageElement(uint16(ref.index))
+	return elem.key(), elem.value(), elem.flags
+}
+
+// 递归搜索，对指定的page/node执行二分搜索，直到找到给定的Key
+func (c *Cursor) search(key []byte, pgid pgid) {
+	// 根据pgid获得 page / node
+	p, n := c.bucket.pageNode(pgid)
+	// 如果返回page，并且该page既不是leaf page ，也不是 brach page，则panic
+	if p != nil && (p.flags&(branchPageFlag|leafPageFlag)) == 0 {
+		panic(fmt.Sprintf("invalid page type: &d: %x", p.id, p.flags))
+	}
+	e := elemRef{
+		page: p,
+		node: n,
+	}
+	// 记录遍历过的路径
+	c.stack = append(c.stack, e)
+	if e.isLeaf() {
+		c.nserach(key)
+		return
+	}
+}
+
+// 移动到下一个叶子节点，返回key value，中序遍历
+func (c *Cursor) next() (key []byte, value []byte, flags uint32) {
+	for {
+		var i int
+		// 遍历stack中的每个索引，如果索引所在的page/node不是最后一个元素，就往后移动一个位置
+		for i = len(c.stack) - 1; i >= 0; i-- {
+			elem := &c.stack[i]
+			if elem.index < elem.count() {
+				elem.index++
+				break
+			}
+			// 遍历完了所有页面
+			if i == -1 {
+				return nil, nil, 0
+			}
+			// 剩余的节点里面找，跳过原先遍历过的节点
+			c.stack = c.stack[:i+1]
+			// 如果是叶子节点，first()啥都不做，直接退出。返回elem.index+1的数据
+			// 非叶子节点的话，需要移动到stack中最后一个路径的第一个元素
+			c.first()
+			if c.stack[len(c.stack)-1].count() == 0 {
+				continue
+			}
+			return c.keyValue()
+		}
+	}
 }
 
 // 移动cursor找到第一个在Bucket中的元素，并返回它的key-value
@@ -22,10 +118,9 @@ func (c *Cursor) First(key []byte, value []byte) {
 		node:  n,
 		index: 0,
 	})
-
 }
 
-// curse移动到栈中最后一页下的第一个叶子元素,
+// 找到最后一个非叶子节点的第一个叶子节点。index=0的节点
 func (c *Cursor) first() {
 	for { // 找到最左边第一个叶子节点
 		// 每次循环取出最后一个元素
@@ -49,13 +144,23 @@ func (c *Cursor) first() {
 	}
 }
 
-// 在stack顶的leaf node搜索一个Key
+// 在stack顶部的 leaf node/ page中 搜索Key
 func (c *Cursor) nserach(key []byte) {
-	e := c.stack[len(c.stack)-1]
-	_, n := *e.page, *e.node
-	// func(i int)为false时，二分搜索向右搜索
-	index := sort.Search(len(n.innodes), func(i int) bool {
-		return bytes.Compare(n.innodes[i].key, key) != -1
+	e := &c.stack[len(c.stack)-1]
+	p, n := e.page, e.node
+	// 搜索node
+	if n != nil {
+		index := sort.Search(len(n.innodes), func(i int) bool {
+			return bytes.Compare(n.innodes[i].key, key) != -1
+		})
+		e.index = index
+		return
+	}
+	// 获取leaf page中的所有elem
+	inodes := p.leafPageElements()
+	// 二分搜索page中的elem
+	index := sort.Search(len(inodes), func(i int) bool {
+		return bytes.Compare(inodes[i].key(), key) != -1
 	})
 	e.index = index
 }

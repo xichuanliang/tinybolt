@@ -13,8 +13,6 @@ type person struct {
 
 func main() {
 
-
-
 	pos := unsafe.Offsetof(person{}.height)
 	fmt.Println(pos)
 	p := &person{
