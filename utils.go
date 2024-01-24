@@ -15,3 +15,7 @@ func Assert(conditon bool, msg string, v ...interface{}) {
 		panic(fmt.Sprintf("assertion failed: "+msg, v...))
 	}
 }
+
+func a() {
+
+}
